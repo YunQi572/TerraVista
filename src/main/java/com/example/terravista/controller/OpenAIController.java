@@ -1,18 +1,20 @@
 package com.example.terravista.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
-
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.io.IOException;
+import java.util.*;
 
 @RestController
 @RequestMapping("/ai")
 public class OpenAIController {
+        private static final Logger logger = LoggerFactory.getLogger(OpenAIController.class);
 
         @Value("${ai.config.deepseek.apiKey}")
         private String apiKey;
@@ -21,84 +23,123 @@ public class OpenAIController {
         private String baseUrl;
 
         private final RestTemplate restTemplate = new RestTemplate();
+        private final ObjectMapper objectMapper = new ObjectMapper();
 
-        @GetMapping("/tags")
-        public ResponseEntity<Map<String, List<String>>> getTags() {
-                Map<String, List<String>> tags = new HashMap<>();
+        private String cleanResponse(String content) {
+                // 移除所有代码块标记
+                String cleaned = content.replaceAll("(?i)```json\\s*", "")
+                        .replaceAll("```", "")
+                        .trim();
 
-                // 省份标签
-                tags.put("provinces", Arrays.asList(
-                                "北京", "上海", "广东", "江苏", "浙江", "四川", "云南", "西藏", "新疆", "内蒙古"));
+                // 智能补全JSON结构
+                int firstBrace = cleaned.indexOf('{');
+                int lastBrace = cleaned.lastIndexOf('}');
 
-                // 山水标签
-                tags.put("landscape", Arrays.asList(
-                                "山川", "湖泊", "海洋", "森林", "草原", "沙漠", "峡谷", "瀑布", "温泉"));
-
-                // 人文标签
-                tags.put("culture", Arrays.asList(
-                                "历史古迹", "宗教寺庙", "民俗文化", "美食", "艺术", "博物馆", "古镇", "现代都市"));
-
-                return ResponseEntity.ok(tags);
+                if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
+                        return cleaned.substring(firstBrace, lastBrace + 1);
+                }
+                return cleaned;
         }
 
-        @PostMapping("/recommend")
-        public ResponseEntity<?> getRecommendations(@RequestBody Map<String, Object> request) {
+        private boolean isValidStructure(JsonNode rootNode) {
                 try {
-                        List<String> provinces = (List<String>) request.get("province");
-                        List<String> landscapeTags = (List<String>) request.get("landscape");
-                        List<String> cultureTags = (List<String>) request.get("culture");
-                        String additionalInfo = (String) request.get("additionalInfo");
+                        if (!rootNode.has("title") || !rootNode.has("items")) return false;
 
-                        if (provinces == null || provinces.isEmpty()) {
-                                return ResponseEntity.badRequest().body(Map.of("error", "请至少选择一个省份"));
+                        JsonNode items = rootNode.get("items");
+                        if (!items.isArray()) return false;
+
+                        for (JsonNode item : items) {
+                                if (!item.has("name") || !item.has("desc")) return false;
+                        }
+                        return true;
+                } catch (Exception e) {
+                        logger.error("Structure validation error: {}", e.getMessage());
+                        return false;
+                }
+        }
+
+        @PostMapping("/chat")
+        public ResponseEntity<?> chat(@RequestBody Map<String, Object> request) {
+                try {
+                        String message = (String) request.get("message");
+                        List<Map<String, Object>> history = (List<Map<String, Object>>) request.get("history");
+
+                        // 请求验证和消息构建
+                        List<Map<String, String>> messages = new ArrayList<>();
+                        messages.add(Map.of(
+                                "role", "system",
+                                "content", "你是一个专业的旅游助手，请严格按以下JSON格式响应：\n" +
+                                        "{\"title\": \"推荐标题\", \"items\": [{\"name\":\"景点名\", \"desc\":\"景点描述\"}]}\n" +
+                                        "不要使用代码块标记，直接输出纯JSON"
+                        ));
+
+                        // 历史消息处理
+                        if (history != null) {
+                                history.forEach(msg -> {
+                                        if (msg.containsKey("role") && msg.containsKey("content")) {
+                                                messages.add(Map.of(
+                                                        "role", msg.get("role").toString(),
+                                                        "content", msg.get("content").toString()
+                                                ));
+                                        }
+                                });
                         }
 
-                        // 构建提示词
-                        StringBuilder prompt = new StringBuilder();
-                        prompt.append("作为一个旅游推荐专家，请根据以下条件推荐3个最适合的旅游景点：\n");
-                        prompt.append("省份：").append(String.join("、", provinces)).append("\n");
+                        // 构建API请求
+                        Map<String, Object> apiRequest = new HashMap<>();
+                        apiRequest.put("model", "deepseek-chat");
+                        apiRequest.put("messages", messages);
+                        apiRequest.put("temperature", 0.7);
+                        apiRequest.put("max_tokens", 2000);
 
-                        if (landscapeTags != null && !landscapeTags.isEmpty()) {
-                                prompt.append("景观偏好：").append(String.join("、", landscapeTags)).append("\n");
-                        }
-
-                        if (cultureTags != null && !cultureTags.isEmpty()) {
-                                prompt.append("文化偏好：").append(String.join("、", cultureTags)).append("\n");
-                        }
-
-                        if (additionalInfo != null && !additionalInfo.trim().isEmpty()) {
-                                prompt.append("其他需求：").append(additionalInfo).append("\n");
-                        }
-
-                        prompt.append("请以JSON格式返回推荐结果，包含景点名称、推荐理由、最佳游玩时间、交通建议等信息。");
-
-                        // 构建请求体
-                        Map<String, Object> requestBody = new HashMap<>();
-                        requestBody.put("model", "deepseek-chat");
-                        requestBody.put("messages", Arrays.asList(
-                                        Map.of("role", "system", "content", "你是一个专业的旅游推荐助手，擅长根据用户偏好推荐合适的旅游景点。"),
-                                        Map.of("role", "user", "content", prompt.toString())));
-                        requestBody.put("temperature", 0.7);
-                        requestBody.put("max_tokens", 1000);
-
-                        // 设置请求头
                         HttpHeaders headers = new HttpHeaders();
                         headers.setContentType(MediaType.APPLICATION_JSON);
                         headers.set("Authorization", "Bearer " + apiKey);
 
-                        // 发送请求
-                        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+                        // API调用
                         ResponseEntity<Map> response = restTemplate.exchange(
-                                        baseUrl,
-                                        HttpMethod.POST,
-                                        entity,
-                                        Map.class);
+                                baseUrl,
+                                HttpMethod.POST,
+                                new HttpEntity<>(apiRequest, headers),
+                                Map.class
+                        );
 
-                        return ResponseEntity.ok(response.getBody());
+                        // 响应处理
+                        if (response.getStatusCode().is2xxSuccessful() && response.hasBody()) {
+                                Map<String, Object> responseBody = response.getBody();
+                                List<Map<String, Object>> choices = (List<Map<String, Object>>) responseBody.get("choices");
+
+                                if (choices != null && !choices.isEmpty()) {
+                                        Map<String, Object> messageObj = (Map<String, Object>) choices.get(0).get("message");
+                                        String rawContent = (String) messageObj.get("content");
+
+                                        // 清理响应内容
+                                        String cleanedContent = cleanResponse(rawContent);
+                                        logger.info("Cleaned content: {}", cleanedContent);
+
+                                        try {
+                                                JsonNode jsonNode = objectMapper.readTree(cleanedContent);
+                                                if (isValidStructure(jsonNode)) {
+                                                        return ResponseEntity.ok()
+                                                                .contentType(MediaType.APPLICATION_JSON)
+                                                                .body(jsonNode);
+                                                }
+                                                logger.warn("Invalid structure: {}", cleanedContent);
+                                        } catch (IOException e) {
+                                                logger.error("JSON解析失败: {}", cleanedContent);
+                                        }
+                                }
+                        }
+
+                        // 降级处理
+                        return ResponseEntity.ok()
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .body(Collections.singletonMap("error", "AI响应格式异常"));
+
                 } catch (Exception e) {
-                        e.printStackTrace(); // 添加这行来打印详细错误信息
-                        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                                        .body(Map.of("error", "获取推荐失败：" + e.getMessage()));
+                        logger.error("Chat error: {}", e.getMessage());
+                        return ResponseEntity.status(500)
+                                .body(Collections.singletonMap("error", "服务暂时不可用"));
                 }
         }
 }

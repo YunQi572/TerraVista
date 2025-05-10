@@ -1,374 +1,289 @@
 <template>
   <div class="ai-recommend-container">
     <div class="header-actions">
-      <el-button type="primary" @click="dialogVisible = true">
-        智能景点推荐
-      </el-button>
-      <el-button type="danger" @click="clearHistory" v-if="conversationHistory.length > 0">
+      <el-button type="danger" @click="clearHistory">
         清除历史记录
       </el-button>
     </div>
 
-    <el-dialog
-      v-model="dialogVisible"
-      title="智能景点推荐"
-      width="50%"
-      :before-close="handleClose"
-    >
-      <el-form :model="filterForm" label-width="100px">
-        <el-form-item label="选择省份">
-          <el-select
-            v-model="filterForm.province"
-            multiple
-            collapse-tags
-            placeholder="请选择省份"
+    <div class="chat-container">
+      <div class="chat-messages" ref="chatMessages">
+        <!-- 结构化推荐渲染整合到消息流中 -->
+        <div
+            v-for="(message, index) in conversationHistory"
+            :key="index"
+        >
+          <!-- 结构化消息 -->
+          <div
+              v-if="message.structuredData"
+              class="structured-container message ai-message"
           >
-            <el-option
-              v-for="province in tags.provinces"
-              :key="province"
-              :label="province"
-              :value="province"
-            />
-          </el-select>
-        </el-form-item>
+            <div class="header">
+              <h2 class="title">{{ message.structuredData.title }}</h2>
+              <div class="decorative-line"></div>
+            </div>
+            <div class="recommend-grid">
+              <div
+                  v-for="(item, idx) in message.structuredData.items"
+                  :key="idx"
+                  class="recommend-card"
+              >
+                <div class="card-header">
+                  <span class="index">0{{ idx + 1 }}</span>
+                  <h3 class="name">{{ item.name }}</h3>
+                </div>
+                <div class="card-body">
+                  <p class="desc">{{ item.desc }}</p>
+                </div>
+              </div>
+            </div>
+            <div class="message-time">{{ message.timestamp }}</div>
+          </div>
 
-        <el-form-item label="景观偏好">
-          <el-select
-            v-model="filterForm.landscape"
-            multiple
-            collapse-tags
-            placeholder="请选择景观偏好"
+
+          <!-- 普通消息 -->
+          <div
+              v-else
+              :class="['message', message.role === 'user' ? 'user-message' : 'ai-message']"
           >
-            <el-option
-              v-for="tag in tags.landscape"
-              :key="tag"
-              :label="tag"
-              :value="tag"
-            />
-          </el-select>
-        </el-form-item>
+            <div class="message-content">
+              <p class="typewriter">{{ message.content }}</p>
+            </div>
+            <div class="message-time">{{ message.timestamp }}</div>
+          </div>
+        </div>
+      </div>
 
-        <el-form-item label="文化偏好">
-          <el-select
-            v-model="filterForm.culture"
-            multiple
-            collapse-tags
-            placeholder="请选择文化偏好"
-          >
-            <el-option
-              v-for="tag in tags.culture"
-              :key="tag"
-              :label="tag"
-              :value="tag"
-            />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="补充说明">
-          <el-input
-            v-model="filterForm.additionalInfo"
+      <div class="chat-input">
+        <el-input
+            v-model="userInput"
             type="textarea"
             :rows="3"
-            placeholder="请输入您的其他需求或偏好，例如：想要安静的地方、适合拍照的景点等"
-          />
-        </el-form-item>
-      </el-form>
-
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="getRecommendations" :loading="loading">
-            获取推荐
+            placeholder="请输入您的问题，例如：我想去云南旅游，有什么推荐？"
+            @keyup.enter.ctrl="sendMessage"
+        />
+        <div class="input-actions">
+          <el-button type="primary" @click="sendMessage" :loading="loading">
+            发送
           </el-button>
-        </span>
-      </template>
-    </el-dialog>
-
-    <!-- 对话历史记录对话框 -->
-    <div class="conversation-container">
-      <div v-for="(message, index) in conversationHistory" :key="index" class="message-item">
-        <div class="message-header">
-          <span class="timestamp">{{ message.timestamp }}</span>
-        </div>
-        <div class="message-content">
-          <p class="typewriter">{{ message.content }}</p>
+          <span class="input-tip">按 Ctrl + Enter 发送</span>
         </div>
       </div>
     </div>
 
-    <el-dialog
-      v-model="rawContentVisible"
-      title="推荐内容"
-      width="70%"
-      :before-close="handleRawContentClose"
-    >
-      <div class="raw-content">
-        <p class="typewriter">{{ rawContent }}</p>
-      </div>
-    </el-dialog>
-
-    <div v-if="recommendations.length > 0" class="recommendations-container">
-      <el-card v-for="(rec, index) in recommendations" :key="index" class="recommendation-card">
-        <template #header>
-          <div class="recommendation-header">
-            <h3>{{ rec.name }}</h3>
-          </div>
-        </template>
-        <div class="recommendation-content">
-          <p><strong>推荐理由：</strong><span class="typewriter">{{ typewriterTexts[index]?.reason || '' }}</span></p>
-          <p><strong>最佳游玩时间：</strong><span class="typewriter">{{ typewriterTexts[index]?.bestTime || '' }}</span></p>
-          <p><strong>交通建议：</strong><span class="typewriter">{{ typewriterTexts[index]?.transportation || '' }}</span></p>
-        </div>
-      </el-card>
-    </div>
-
-    <el-empty v-else-if="!loading" description="请点击上方按钮获取推荐" />
+    <el-empty
+        v-if="!loading && conversationHistory.length === 0"
+        description="请输入您的问题开始对话"
+    />
   </div>
 </template>
 
 <script>
 import axios from 'axios'
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import LZString from 'lz-string' // 确保已安装 lz-string
 
 export default {
   name: 'AIRecommend',
   setup() {
     const router = useRouter()
-    const dialogVisible = ref(false)
-    const rawContentVisible = ref(false)
-    const rawContent = ref('')
     const conversationHistory = ref([])
-    const recommendations = ref([])
     const loading = ref(false)
-    const typewriterTexts = reactive({})
-    
-    const filterForm = reactive({
-      province: [],
-      landscape: [],
-      culture: [],
-      additionalInfo: ''
-    })
+    const userInput = ref('')
+    const chatMessages = ref(null)
 
-    const tags = reactive({
-      provinces: [],
-      landscape: [],
-      culture: []
-    })
-
-    // 从localStorage加载对话历史
+    // 修复1: 将存储方法提升到setup顶层
     const loadConversationHistory = () => {
-      const savedHistory = localStorage.getItem('conversationHistory')
-      if (savedHistory) {
-        try {
-          conversationHistory.value = JSON.parse(savedHistory)
-        } catch (e) {
-          console.error('加载对话历史失败:', e)
-          conversationHistory.value = []
-        }
-      }
-    }
-
-    // 保存对话历史到localStorage
-    const saveConversationHistory = () => {
       try {
-        localStorage.setItem('conversationHistory', JSON.stringify(conversationHistory.value))
+        const raw = localStorage.getItem('conversationHistory')
+        if (!raw) return
+
+        // 处理压缩数据
+        const data = raw.startsWith('◌')
+            ? LZString.decompress(raw)
+            : raw
+
+        const parseWithRetry = (jsonString) => {
+          try {
+            return JSON.parse(jsonString)
+          } catch (e) {
+            console.warn('尝试修复数据格式...')
+            const repaired = jsonString
+                .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":')
+                .replace(/'/g, '"')
+            return JSON.parse(repaired)
+          }
+        }
+
+        const parsed = parseWithRetry(data)
+
+        if (Array.isArray(parsed)) {
+          conversationHistory.value = parsed.map(item => ({
+            role: item.role || 'assistant',
+            content: item.content || '',
+            timestamp: item.timestamp || new Date().toLocaleString(),
+            structuredData: item.structuredData ? {
+              title: item.structuredData.title || '无标题',
+              items: (item.structuredData.items || []).map(i => ({
+                name: i.name || '未知景点',
+                desc: i.desc || '暂无描述'
+              }))
+            } : null
+          }))
+        }
       } catch (e) {
-        console.error('保存对话历史失败:', e)
+        console.error('加载失败:', e)
+        localStorage.removeItem('conversationHistory')
       }
     }
 
-    // 监听对话历史变化
-    watch(conversationHistory, () => {
-      saveConversationHistory()
-    }, { deep: true })
+    // 修复2: 添加防抖的保存方法
+    let saveTimeout = null
+    const saveConversationHistory = () => {
+      clearTimeout(saveTimeout)
+      saveTimeout = setTimeout(() => {
+        try {
+          const data = JSON.stringify(conversationHistory.value)
 
-    // 初始化函数
+          if (data.length > 1024 * 1024 * 5) { // 5MB
+            const compressed = LZString.compress(data)
+            localStorage.setItem('conversationHistory', compressed)
+          } else {
+            localStorage.setItem('conversationHistory', data)
+          }
+        } catch (e) {
+          console.error('存储失败:', e)
+          sessionStorage.setItem(
+              'conversationBackup',
+              JSON.stringify(conversationHistory.value)
+          )
+        }
+      }, 500)
+    }
+
+    // 修复3: 添加深度监听
+    watch(
+        conversationHistory,
+        (newVal) => {
+          saveConversationHistory()
+          nextTick(() => {
+            if (chatMessages.value) {
+              chatMessages.value.scrollTop = chatMessages.value.scrollHeight
+            }
+          })
+        },
+        { deep: true }
+    )
+
     const initialize = async () => {
-      // 检查登录状态
-      const token = localStorage.getItem('token')
-      if (!token) {
-        router.push('/login')
-        return
+      try {
+        // 存储可用性检测
+        localStorage.setItem('__test__', 'test')
+        localStorage.removeItem('__test__')
+
+        // 修复4: 确保加载执行
+        loadConversationHistory()
+      } catch (e) {
+        console.error('本地存储不可用:', e)
       }
-      // 加载对话历史
-      loadConversationHistory()
-      // 获取标签
-      await fetchTags()
     }
 
-    // 在组件挂载时初始化
     onMounted(() => {
       initialize()
     })
 
-    // 添加清除历史记录的方法
+    // 其他方法保持不变...
     const clearHistory = () => {
       if (confirm('确定要清除所有对话历史吗？')) {
         conversationHistory.value = []
         localStorage.removeItem('conversationHistory')
       }
     }
-
-    const startTypewriter = (index) => {
-      const rec = recommendations.value[index]
-      const fields = ['reason', 'bestTime', 'transportation']
-      
-      fields.forEach(field => {
-        const text = rec[field]
-        let currentIndex = 0
-        
-        const interval = setInterval(() => {
-          if (currentIndex < text.length) {
-            typewriterTexts[index][field] = text.substring(0, currentIndex + 1)
-            currentIndex++
-          } else {
-            clearInterval(interval)
-          }
-        }, 50)
-      })
-    }
-
-    const startContentTypewriter = (text, historyIndex) => {
-      let currentIndex = 0
-      const interval = setInterval(() => {
-        if (currentIndex < text.length) {
-          conversationHistory.value[historyIndex].content = text.substring(0, currentIndex + 1)
-          currentIndex++
-        } else {
-          clearInterval(interval)
-        }
-      }, 20)
-    }
-
-    const handleClose = (done) => {
-      if (confirm('确认关闭？')) {
-        done()
-      }
-    }
-
-    const handleRawContentClose = (done) => {
-      if (confirm('确认关闭？')) {
-        done()
-      }
-    }
-
-    const fetchTags = async () => {
+    const handleAIResponse = (data) => {
       try {
-        const response = await axios.get('/api/ai/tags')
-        Object.assign(tags, response.data)
-      } catch (error) {
-        console.error('获取标签失败:', error)
-        alert('获取标签失败')
-      }
-    }
+        if (data?.title && data?.items) {
+          const structuredData = {
+            title: data.title,
+            items: data.items.map(item => ({
+              name: item.name || '未知景点',
+              desc: item.desc || '暂无描述'
+            }))
+          };
 
-    const getRecommendations = async () => {
-      if (filterForm.province.length === 0) {
-        alert('请至少选择一个省份')
-        return
+          const textContent = `${structuredData.title}\n\n` +
+              structuredData.items.map((item, index) =>
+                  `${index + 1}. ${item.name}：${item.desc}`
+              ).join('\n');
+
+          conversationHistory.value.push({
+            role: 'assistant',
+            content: textContent,
+            structuredData: structuredData,
+            timestamp: new Date().toLocaleString()
+          });
+          return true;
+        }
+      } catch (e) {
+        console.error('结构化解析失败:', e);
       }
+      return false;
+    };
+
+    const sendMessage = async () => {
+      if (!userInput.value.trim()) return
+
+      const userMessage = userInput.value.trim()
+      const userMessage2 = `${userInput.value.trim()}，请加上最佳观赏时间`
+      userInput.value = ''
+
+      conversationHistory.value.push({
+        role: 'user',
+        content: userMessage,
+        timestamp: new Date().toLocaleString()
+      })
 
       loading.value = true
-      dialogVisible.value = false
-      
+
       try {
-        const response = await axios.post('/api/ai/recommend', {
-          province: filterForm.province,
-          landscape: filterForm.landscape || [],
-          culture: filterForm.culture || [],
-          additionalInfo: filterForm.additionalInfo || ''
+        const response = await axios.post('/api/ai/chat', {
+          message: userMessage2,
+          history: conversationHistory.value
         })
-        
-        console.log('API Response:', response.data)
-        
-        let content = ''
-        if (response.data.choices && response.data.choices[0]?.message?.content) {
-          content = response.data.choices[0].message.content
-        } else if (typeof response.data === 'string') {
-          content = response.data
-        } else if (response.data.content) {
-          content = response.data.content
-        }
 
-        console.log('Extracted content:', content)
-
-        // 处理可能包含的markdown代码块标记
-        content = content.replace(/```json\n?|\n?```/g, '').trim()
-
-        conversationHistory.value.push({
-          timestamp: new Date().toLocaleString(),
-          content: ''
-        })
-        
-        startContentTypewriter(content, conversationHistory.value.length - 1)
-        
-        let parsedRecommendations
-        try {
-          if (Array.isArray(content)) {
-            parsedRecommendations = content
-          } else {
-            const parsedData = JSON.parse(content)
-            if (parsedData.recommendations && Array.isArray(parsedData.recommendations)) {
-              parsedRecommendations = parsedData.recommendations
-              if (parsedData.additional_tips) {
-                const tipsContent = JSON.stringify(parsedData.additional_tips, null, 2)
-                conversationHistory.value.push({
-                  timestamp: new Date().toLocaleString(),
-                  content: '额外提示：\n' + tipsContent
-                })
-              }
-            } else {
-              parsedRecommendations = parsedData
-            }
-          }
-        } catch (e) {
-          console.error('解析推荐数据失败:', e)
-          console.error('原始数据:', content)
-          alert('解析推荐数据失败，请检查返回数据格式')
+        // 处理响应（移除内部重复定义的handleAIResponse）
+        if (handleAIResponse(response.data)) {
           return
         }
 
-        if (!Array.isArray(parsedRecommendations)) {
-          console.error('推荐数据格式不正确:', parsedRecommendations)
-          alert('推荐数据格式不正确，应为数组格式')
-          return
+        // 降级处理
+        const aiMessage = {
+          role: 'assistant',
+          content: typeof response.data === 'string'
+              ? response.data
+              : JSON.stringify(response.data),
+          timestamp: new Date().toLocaleString()
         }
+        conversationHistory.value.push(aiMessage)
 
-        recommendations.value = parsedRecommendations
-        
-        // 初始化打字机效果
-        Object.keys(typewriterTexts).forEach(key => delete typewriterTexts[key])
-        recommendations.value.forEach((rec, index) => {
-          typewriterTexts[index] = {
-            reason: '',
-            bestTime: '',
-            transportation: ''
-          }
-          startTypewriter(index)
-        })
       } catch (error) {
-        console.error('获取推荐失败:', error)
-        alert(error.response?.data?.error || '获取推荐失败')
+        console.error('请求失败:', error)
+        conversationHistory.value.push({
+          role: 'assistant',
+          content: error.response?.data?.error || '服务暂时不可用',
+          timestamp: new Date().toLocaleString()
+        })
       } finally {
         loading.value = false
       }
     }
 
     return {
-      dialogVisible,
-      rawContentVisible,
-      rawContent,
       conversationHistory,
-      filterForm,
-      tags,
-      recommendations,
       loading,
-      typewriterTexts,
-      handleClose,
-      handleRawContentClose,
-      fetchTags,
-      getRecommendations,
+      userInput,
+      chatMessages,
+      sendMessage,
       clearHistory
     }
   }
@@ -380,112 +295,206 @@ export default {
   padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
-}
-
-.recommendations-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-  margin-top: 20px;
-}
-
-.recommendation-card {
-  height: 100%;
-}
-
-.recommendation-header {
+  min-height: calc(100vh - 40px);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.recommendation-header h3 {
-  margin: 0;
-  color: #303133;
-}
-
-.recommendation-content {
-  color: #606266;
-}
-
-.recommendation-content p {
-  margin: 8px 0;
-  line-height: 1.6;
-}
-
-.el-select {
-  width: 100%;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.typewriter {
-  display: inline-block;
-  min-height: 1.2em;
-}
-
-.raw-content {
-  font-family: monospace;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  background-color: #f5f7fa;
-  padding: 20px;
-  border-radius: 4px;
-  max-height: 60vh;
-  overflow-y: auto;
-}
-
-.raw-content .typewriter {
-  margin: 0;
-  line-height: 1.6;
-}
-
-.conversation-container {
-  margin-top: 20px;
-  max-height: 500px;
-  overflow-y: auto;
-  padding: 20px;
-  background-color: #f5f7fa;
-  border-radius: 4px;
-  margin-bottom: 20px;
-}
-
-.message-item {
-  margin-bottom: 20px;
-  padding: 15px;
-  background-color: white;
-  border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.message-header {
-  margin-bottom: 10px;
-  color: #909399;
-  font-size: 0.9em;
-}
-
-.message-content {
-  font-family: monospace;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  line-height: 1.6;
-}
-
-.message-content .typewriter {
-  margin: 0;
-}
-
-.el-textarea {
-  width: 100%;
+  flex-direction: column;
 }
 
 .header-actions {
   display: flex;
   gap: 10px;
   margin-bottom: 20px;
+}
+
+.chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  padding: 20px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  background-color: #f5f7fa;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  min-height: 400px;
+}
+
+/* 结构化推荐样式 */
+.structured-container {
+  padding: 20px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.title {
+  font-size: 28px;
+  color: #2c3e50;
+  margin-bottom: 10px;
+  font-weight: 600;
+  position: relative;
+}
+
+.decorative-line {
+  width: 60px;
+  height: 3px;
+  background: #409EFF;
+  margin: 0 auto;
+  border-radius: 2px;
+}
+
+.recommend-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.recommend-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  border: 1px solid #ebeef5;
+  transition: all 0.3s;
+  cursor: pointer;
+}
+
+.recommend-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.index {
+  font-size: 24px;
+  color: #409EFF;
+  font-weight: 700;
+  margin-right: 15px;
+  opacity: 0.8;
+}
+
+/* 新增结构化消息的样式调整 */
+.structured-container.message {
+  margin-bottom: 30px;
+  max-width: 100% !important;
+}
+
+/* 调整卡片间距 */
+.recommend-card {
+  margin-bottom: 10px;
+}
+
+/* 为结构化消息添加底部边距 */
+.structured-container .message-time {
+  margin-top: 15px;
+  text-align: right;
+}
+
+.name {
+  font-size: 18px;
+  color: #2c3e50;
+  margin: 0;
+}
+
+.desc {
+  color: #666;
+  line-height: 1.8;
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 消息样式 */
+.message {
+  margin-bottom: 20px;
+  max-width: 80%;
+}
+
+.user-message {
+  margin-left: auto;
+}
+
+.ai-message {
+  margin-right: auto;
+}
+
+.message-content {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background-color: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.user-message .message-content {
+  background-color: #409EFF;
+  color: white;
+}
+
+.message-time {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  text-align: right;
+}
+
+/* 输入区域样式 */
+.chat-input {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.input-tip {
+  font-size: 12px;
+  color: #909399;
+}
+
+.typewriter {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.message.ai-message .structured-container {
+  background: #fff;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 确保文字颜色可见 */
+.structured-container .title {
+  color: #2c3e50 !important; /* 强制覆盖可能存在的继承颜色 */
+}
+
+.structured-container .desc {
+  color: #666 !important;
+}
+
+/* 修复消息容器宽度 */
+.ai-message {
+  max-width: 80%;
+  width: 100%;
 }
 </style>
